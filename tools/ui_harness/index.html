@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8" />
+    <title>Task-Driven LLM API · editor harness</title>
+    <!-- The host tokens, copied from ComfyUI's own stylesheet, so the panel is
+         rendered against the same theme values it will meet in the app. -->
+    <style>
+      :root {
+        --color-white: #fff;
+        --color-charcoal-100: #55565e; --color-charcoal-200: #494a50; --color-charcoal-300: #3c3d42;
+        --color-charcoal-400: #313235; --color-charcoal-500: #2d2e32; --color-charcoal-600: #262729;
+        --color-charcoal-700: #202121; --color-charcoal-800: #171718;
+        --color-smoke-200: #e9e9e9; --color-smoke-400: #d9d9d9; --color-smoke-600: #b4b4b4; --color-smoke-800: #8a8a8a;
+        --color-azure-300: #78bae9; --color-azure-400: #31b9f4; --color-azure-600: #0b8ce9;
+        --color-coral-500: #f75951; --color-amber-400: #fcbb00;
+        color-scheme: dark;
+      }
+      html.theme-dark {
+        --base-background: var(--color-charcoal-800);
+        --base-foreground: var(--color-white);
+        --border-default: var(--color-charcoal-200);
+        --border-subtle: var(--color-charcoal-300);
+        --comfy-menu-bg: #353535;
+        --comfy-input-bg: #222;
+        --input-text: #ddd;
+        --muted-foreground: var(--color-charcoal-200);
+        --button-surface: var(--color-charcoal-600);
+        --button-hover-surface: var(--color-charcoal-600);
+        --button-active-surface: var(--color-charcoal-600);
+      }
+      html.theme-light {
+        --base-background: var(--color-white);
+        --base-foreground: var(--color-charcoal-800);
+        --border-default: var(--color-smoke-600);
+        --border-subtle: var(--color-smoke-400);
+        --comfy-menu-bg: #f2f2f2;
+        --comfy-input-bg: #fff;
+        --input-text: #222;
+        --muted-foreground: var(--color-smoke-800);
+        --button-surface: var(--color-white);
+        --button-hover-surface: var(--color-smoke-200);
+        --button-active-surface: var(--color-smoke-400);
+        color-scheme: light;
+      }
+      html, body { height: 100%; margin: 0; }
+      body {
+        background: var(--base-background);
+        color: var(--base-foreground);
+        font: 13px/1.5 system-ui, sans-serif;
+      }
+      /* A stand-in for the node graph, so the panel's scrim and shadow are
+         judged in the context they actually appear in. */
+      .fake-graph {
+        position: absolute; inset: 0;
+        background-image: linear-gradient(color-mix(in oklab, var(--base-foreground) 7%, transparent) 1px, transparent 1px),
+                          linear-gradient(90deg, color-mix(in oklab, var(--base-foreground) 7%, transparent) 1px, transparent 1px);
+        background-size: 24px 24px;
+      }
+      .fake-node {
+        position: absolute; left: 40px; top: 60px; width: 300px;
+        background: #353535; color: #ddd; border: 1px solid #555; border-radius: 8px;
+        box-shadow: 0 6px 18px rgba(0,0,0,.45); overflow: hidden;
+      }
+      .fake-node__title { padding: 6px 10px; font-weight: 600; background: #454545; }
+      .fake-node__row { padding: 5px 10px; font-size: 12px; border-top: 1px solid #444; display: flex; justify-content: space-between; }
+      .fake-node__row em { font-style: normal; color: #aaa; }
+      #harness-note { position: absolute; left: 40px; bottom: 18px; font-size: 11px; color: color-mix(in oklab, var(--base-foreground) 55%, transparent); }
+    </style>
+    <link rel="stylesheet" href="./extensions/ComfyUI-Task-Driven-LLM-API/task_llm.css" />
+  </head>
+  <body class="theme-dark">
+    <div class="fake-graph"></div>
+    <div class="fake-node">
+      <div class="fake-node__title">Task-Driven LLM API（提示詞任務 · LLM API）</div>
+      <div class="fake-node__row"><span>task</span><em>多圖參考合成（景 / 人 / 色調）</em></div>
+      <div class="fake-node__row"><span>provider</span><em>ollama</em></div>
+      <div class="fake-node__row"><span>IMAGE1 · 景</span><em>已連接</em></div>
+      <div class="fake-node__row"><span>IMAGE2 · 人</span><em>已連接</em></div>
+      <div class="fake-node__row"><span>提示詞庫</span><em>按鈕</em></div>
+    </div>
+    <div id="harness-note">UI harness — real extension module, mocked ComfyUI host.</div>
+    <!-- Holds the load event open (and therefore the screenshot) until the
+         editor's awaited renders and its entrance animation have settled. -->
+    <img src="/slow.png" alt="" style="position:absolute;width:1px;height:1px;opacity:0" />
+
+    <script type="module">
+      // Static imports are resolved before this body runs, so the extension is
+      // already registered.  Everything below is deliberately synchronous: the
+      // panel must exist in the same task as this script so a
+      // load-event-driven screenshot cannot fire too early.
+      import "./extensions/ComfyUI-Task-Driven-LLM-API/task_llm.js";
+      import { app } from "./scripts/app.js";
+
+      const params = new URLSearchParams(location.search);
+      const theme = params.get("theme") === "light" ? "light" : "dark";
+      document.documentElement.className = `theme-${theme}`;
+      document.body.className = `theme-${theme}`;
+
+      const extension = app.__extensions.find((entry) => entry.name === "taskllm.library");
+      if (!extension) throw new Error("extension did not register");
+
+      let diag = "ok";
+      try {
+        extension.setup();
+
+        const nodeType = { prototype: {} };
+        extension.beforeRegisterNodeDef(nodeType, { name: "TaskDrivenLLM" });
+
+      const taskLabel = "提示詞生成 · 多圖參考合成（景 / 人 / 色調）";
+      const node = {
+        comfyClass: "TaskDrivenLLM",
+        inputs: [
+          { name: "IMAGE1", type: "IMAGE", link: 1 },
+          { name: "IMAGE2", type: "IMAGE", link: 2 },
+          { name: "IMAGE3", type: "IMAGE", link: null },
+          { name: "IMAGE4", type: "IMAGE", link: null },
+          { name: "IMAGE5", type: "IMAGE", link: null },
+          { name: "IMAGE6", type: "IMAGE", link: null },
+        ],
+        widgets: [
+          { name: "task", value: taskLabel, options: { values: ["a", "b"] } },
+          { name: "provider", value: "ollama" },
+          { name: "model", value: "qwen3-vl:8b" },
+          { name: "model_custom", value: "" },
+          { name: "user_prompt", value: "改成夜晚的市場" },
+          { name: "system_override", value: "" },
+          { name: "image_delivery", value: "逐張標註" },
+        ],
+        addWidget(type, name, value, callback) {
+          const widget = { type, name, value, callback };
+          this.widgets.push(widget);
+          return widget;
+        },
+        addCustomWidget(widget) {
+          this.widgets.push(widget);
+          return widget;
+        },
+        computeSize() {
+          return [340, 560];
+        },
+        setSize() {},
+      };
+
+      nodeType.prototype.onNodeCreated.call(node);
+      node.widgets.find((widget) => widget.name === "提示詞庫").callback();
+
+      if (params.get("tab") === "config") {
+        document.querySelectorAll(".tdl-seg__btn")[1].click();
+      }
+      } catch (error) {
+        diag = "THREW: " + (error && error.stack ? error.stack : error);
+      }
+
+      // The load event waits for this module's top-level await, so waiting
+      // here guarantees the mocked round-trips and the entrance animation have
+      // both settled before Firefox takes the screenshot.
+      await new Promise((resolve) => setTimeout(resolve, 450));
+
+      // Only meaningful once the pane has rendered.
+      if (params.get("scroll") === "bottom") {
+        const pane = document.querySelector(".tdl-pane");
+        if (pane) pane.scrollTop = pane.scrollHeight;
+        await new Promise((resolve) => setTimeout(resolve, 60));
+      }
+
+      const note = document.getElementById("harness-note");
+      if (params.get("diag") === "1") {
+        note.style.cssText =
+          "position:absolute;left:20px;bottom:12px;right:20px;font:12px/1.5 monospace;color:#ffd479;white-space:pre-wrap;z-index:99999";
+        note.textContent =
+          `diag: ${diag}\noverlays=${document.querySelectorAll(".tdl-overlay").length} ` +
+          `panes=${document.querySelectorAll(".tdl-pane").length} items=${document.querySelectorAll(".tdl-item").length} ` +
+          `sections=${document.querySelectorAll(".tdl-section").length} transcript=${(document.querySelector(".tdl-transcript")?.textContent || "").slice(0, 40)}`;
+      } else {
+        note.remove();
+      }
+      document.title = "READY";
+    </script>
+  </body>
+</html>

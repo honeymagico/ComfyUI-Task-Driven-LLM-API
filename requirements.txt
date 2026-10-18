@@ -1,0 +1,3 @@
+# Runtime dependencies.  ComfyUI itself already ships aiohttp, numpy,
+# Pillow and torch, so only the HTTP client is strictly new.
+requests>=2.28

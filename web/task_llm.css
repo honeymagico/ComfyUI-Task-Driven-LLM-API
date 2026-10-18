@@ -1,0 +1,980 @@
+/* ---------------------------------------------------------------------------
+ * Task-Driven LLM API -- in-canvas prompt library editor
+ *
+ * Everything is derived from ComfyUI's own design tokens (with hard
+ * fallbacks for older builds), so the panel follows the user's light/dark
+ * theme without a single hard-coded surface colour.
+ *
+ * Where ComfyUI has no usable token -- secondary text, accents, status
+ * colours -- the value is mixed from the theme's own foreground rather than
+ * set to a fixed grey, so it stays legible in both themes.
+ * ------------------------------------------------------------------------ */
+
+.tdl-root {
+  /* Surfaces */
+  --tdl-surface: var(--base-background, var(--bg-color, #171718));
+  --tdl-raised: var(--comfy-menu-bg, var(--color-charcoal-500, #2d2e32));
+  --tdl-field: var(--comfy-input-bg, var(--color-charcoal-600, #262729));
+  --tdl-well: color-mix(in oklab, var(--tdl-field) 72%, var(--tdl-surface));
+
+  /* Text: tinted from the theme foreground, never a fixed grey.
+     The faint step is 70%, not 64%: at 64% the group labels and placeholders
+     measured ~4.4:1 against the light theme's well surface, just under the
+     4.5:1 floor.  70% gives ~5.9:1 light / ~8.6:1 dark. */
+  --tdl-text: var(--base-foreground, var(--input-text, #e9e9e9));
+  --tdl-text-soft: color-mix(in oklab, var(--tdl-text) 80%, var(--tdl-surface));
+  --tdl-text-faint: color-mix(in oklab, var(--tdl-text) 70%, var(--tdl-surface));
+
+  /* Lines */
+  --tdl-border: var(--border-default, var(--border-color, #494a50));
+  --tdl-border-soft: var(--border-subtle, color-mix(in oklab, var(--tdl-border) 65%, var(--tdl-surface)));
+
+  /* Accents: mixed toward the theme foreground so contrast holds in both
+     themes (#171718 foreground -> dark mode gets a lighter blue, and a
+     near-black foreground -> light mode gets a darker one). */
+  --tdl-accent: var(--color-azure-600, #0b8ce9);
+  --tdl-accent-strong: color-mix(in oklab, var(--tdl-accent) 62%, var(--tdl-text) 38%);
+  --tdl-accent-soft: color-mix(in oklab, var(--tdl-accent) 16%, var(--tdl-surface));
+  --tdl-accent-line: color-mix(in oklab, var(--tdl-accent) 48%, var(--tdl-surface));
+
+  --tdl-danger: color-mix(in oklab, var(--color-coral-500, #f75951) 58%, var(--tdl-text) 42%);
+  --tdl-danger-soft: color-mix(in oklab, var(--color-coral-500, #f75951) 14%, var(--tdl-surface));
+  --tdl-warn: color-mix(in oklab, var(--color-amber-400, #fcbb00) 62%, var(--tdl-text) 38%);
+  --tdl-ok: color-mix(in oklab, #4ac97e 58%, var(--tdl-text) 42%);
+
+  --tdl-mono: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --tdl-ease: cubic-bezier(0.16, 1, 0.3, 1);
+
+  --tdl-shadow: 0 28px 64px -16px rgba(0, 0, 0, 0.58), 0 4px 14px -4px rgba(0, 0, 0, 0.36);
+
+  color: var(--tdl-text);
+  font: 13px/1.5 system-ui, -apple-system, "Segoe UI", "Noto Sans TC", "PingFang TC",
+    "Microsoft JhengHei", sans-serif;
+}
+
+/* -- overlay + panel ------------------------------------------------------ */
+
+.tdl-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: color-mix(in oklab, var(--tdl-surface) 32%, rgba(0, 0, 0, 0.62));
+}
+
+.tdl-panel {
+  display: flex;
+  flex-direction: column;
+  width: min(1180px, 96vw);
+  height: min(860px, 92vh);
+  overflow: hidden;
+  background: var(--tdl-surface);
+  border: 1px solid var(--tdl-border);
+  border-radius: 12px;
+  box-shadow: var(--tdl-shadow);
+  /* The one authored entrance: exponential ease-out from an already-visible
+     default.  No `both`/`backwards` fill mode -- with those the panel sits at
+     opacity 0 until the animation starts, so any environment that does not
+     run the animation (reduced motion, headless, a throttled first frame)
+     would show an invisible dialog. */
+  animation: tdl-enter 260ms var(--tdl-ease);
+}
+
+@keyframes tdl-enter {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.988);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tdl-panel {
+    animation: none;
+  }
+}
+
+.tdl-root ::selection {
+  background: color-mix(in oklab, var(--tdl-accent) 42%, transparent);
+}
+
+/* ComfyUI's theme stops at the panel edge; the browser surfaces inside do not. */
+.tdl-root * {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--tdl-text) 26%, transparent) transparent;
+}
+.tdl-root *::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.tdl-root *::-webkit-scrollbar-track {
+  background: transparent;
+}
+.tdl-root *::-webkit-scrollbar-thumb {
+  background: color-mix(in oklab, var(--tdl-text) 22%, transparent);
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: content-box;
+}
+.tdl-root *::-webkit-scrollbar-thumb:hover {
+  background: color-mix(in oklab, var(--tdl-text) 38%, transparent);
+  background-clip: content-box;
+}
+
+/* -- header --------------------------------------------------------------- */
+
+.tdl-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  flex: 0 0 auto;
+  min-height: 54px;
+  padding: 9px 12px 9px 16px;
+  background: var(--tdl-raised);
+  border-bottom: 1px solid var(--tdl-border-soft);
+}
+
+.tdl-head__mark {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  color: var(--tdl-accent-strong);
+  background: var(--tdl-accent-soft);
+  border: 1px solid var(--tdl-accent-line);
+  border-radius: 8px;
+}
+
+.tdl-head__titles {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.tdl-head__title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  color: var(--tdl-text);
+}
+
+.tdl-head__path {
+  max-width: 44ch;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  font-family: var(--tdl-mono);
+  font-size: 11px;
+  color: var(--tdl-text-faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tdl-head__spacer {
+  flex: 1 1 auto;
+}
+
+.tdl-head__status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--tdl-text-soft);
+}
+.tdl-head__status[data-kind="error"] {
+  color: var(--tdl-danger);
+}
+.tdl-head__status[data-kind="ok"] {
+  color: var(--tdl-ok);
+}
+.tdl-head__status[data-kind="warn"] {
+  color: var(--tdl-warn);
+}
+
+.tdl-dirty {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  color: var(--tdl-warn);
+}
+.tdl-dirty::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  background: currentColor;
+  border-radius: 50%;
+}
+
+/* -- segmented control ---------------------------------------------------- */
+
+.tdl-seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--tdl-well);
+  border: 1px solid var(--tdl-border-soft);
+  border-radius: 9px;
+}
+
+.tdl-seg__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 11px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--tdl-text-soft);
+  background: transparent;
+  border: 0;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background-color 130ms linear, color 130ms linear;
+}
+
+.tdl-seg__btn:hover {
+  color: var(--tdl-text);
+  background: color-mix(in oklab, var(--tdl-text) 8%, transparent);
+}
+
+.tdl-seg__btn.is-active {
+  color: var(--tdl-accent-strong);
+  background: var(--tdl-accent-soft);
+  box-shadow: inset 0 0 0 1px var(--tdl-accent-line);
+}
+
+/* -- body layout ---------------------------------------------------------- */
+
+.tdl-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.tdl-list {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  width: 292px;
+  min-height: 0;
+  background: var(--tdl-well);
+  border-right: 1px solid var(--tdl-border-soft);
+}
+
+.tdl-list__search {
+  position: relative;
+  flex: 0 0 auto;
+  padding: 10px 12px 8px;
+}
+
+.tdl-list__search svg {
+  position: absolute;
+  top: 50%;
+  left: 21px;
+  transform: translateY(-35%);
+  color: var(--tdl-text-faint);
+  pointer-events: none;
+}
+
+.tdl-list__search input {
+  padding-left: 30px;
+}
+
+.tdl-list__scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px 8px 10px;
+}
+
+.tdl-group__label {
+  padding: 12px 8px 4px;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  color: var(--tdl-text-faint);
+}
+
+.tdl-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 8px;
+  margin-bottom: 2px;
+  font: inherit;
+  text-align: left;
+  color: var(--tdl-text);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 120ms linear, border-color 120ms linear;
+}
+
+.tdl-item:hover {
+  background: color-mix(in oklab, var(--tdl-text) 7%, transparent);
+}
+
+.tdl-item.is-active {
+  background: var(--tdl-accent-soft);
+  border-color: var(--tdl-accent-line);
+}
+
+.tdl-item.is-off .tdl-item__title {
+  color: var(--tdl-text-faint);
+  text-decoration: line-through;
+  text-decoration-thickness: 1px;
+}
+
+.tdl-item__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12.5px;
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tdl-item__meta {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--tdl-text-faint);
+}
+
+.tdl-list__foot {
+  flex: 0 0 auto;
+  padding: 8px;
+  border-top: 1px solid var(--tdl-border-soft);
+}
+
+/* -- form pane ------------------------------------------------------------ */
+
+.tdl-pane {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 6px 22px 28px;
+}
+
+.tdl-section {
+  padding-top: 20px;
+}
+
+.tdl-section + .tdl-section {
+  margin-top: 6px;
+  border-top: 1px solid var(--tdl-border-soft);
+}
+
+.tdl-section__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 0;
+  font-size: 11.5px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  color: var(--tdl-text-faint);
+}
+
+.tdl-section__head .tdl-btn {
+  margin-left: auto;
+}
+
+.tdl-hint {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--tdl-text-faint);
+}
+
+.tdl-hint code {
+  padding: 1px 5px;
+  font-family: var(--tdl-mono);
+  font-size: 11px;
+  color: var(--tdl-accent-strong);
+  background: var(--tdl-accent-soft);
+  border-radius: 4px;
+}
+
+.tdl-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 9px 11px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--tdl-text-soft);
+  background: var(--tdl-well);
+  border: 1px solid var(--tdl-border-soft);
+  border-radius: 8px;
+}
+.tdl-note svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--tdl-warn);
+}
+.tdl-note[data-kind="error"] {
+  color: var(--tdl-danger);
+  background: var(--tdl-danger-soft);
+  border-color: color-mix(in oklab, var(--tdl-danger) 34%, var(--tdl-surface));
+}
+.tdl-note[data-kind="error"] svg {
+  color: var(--tdl-danger);
+}
+
+.tdl-grid {
+  display: grid;
+  gap: 12px 14px;
+}
+.tdl-grid--2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.tdl-grid--3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.tdl-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.tdl-field > label,
+.tdl-field__label {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--tdl-text-soft);
+}
+
+.tdl-field__opt {
+  margin-left: 6px;
+  font-weight: 500;
+  color: var(--tdl-text-faint);
+}
+
+.tdl-field__error {
+  font-size: 11.5px;
+  color: var(--tdl-danger);
+}
+
+/* -- controls ------------------------------------------------------------- */
+
+.tdl-root input[type="text"],
+.tdl-root input[type="number"],
+.tdl-root input[type="search"],
+.tdl-root select,
+.tdl-root textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 0 9px;
+  height: 32px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--tdl-text);
+  caret-color: var(--tdl-accent-strong);
+  background: var(--tdl-field);
+  border: 1px solid var(--tdl-border);
+  border-radius: 7px;
+  transition: border-color 130ms linear, box-shadow 130ms linear;
+}
+
+.tdl-root textarea {
+  height: auto;
+  min-height: 96px;
+  padding: 9px 10px;
+  line-height: 1.6;
+  resize: vertical;
+}
+
+.tdl-root textarea.tdl-mono,
+.tdl-root input.tdl-mono {
+  font-family: var(--tdl-mono);
+  font-size: 12.5px;
+  line-height: 1.62;
+}
+
+.tdl-root ::placeholder {
+  color: var(--tdl-text-faint);
+}
+
+.tdl-root input:hover,
+.tdl-root select:hover,
+.tdl-root textarea:hover {
+  border-color: color-mix(in oklab, var(--tdl-border) 60%, var(--tdl-text) 40%);
+}
+
+.tdl-root input:focus,
+.tdl-root select:focus,
+.tdl-root textarea:focus {
+  outline: none;
+  border-color: var(--tdl-accent-strong);
+  box-shadow: 0 0 0 3px var(--tdl-accent-soft);
+}
+
+.tdl-root input[aria-invalid="true"],
+.tdl-root textarea[aria-invalid="true"] {
+  border-color: var(--tdl-danger);
+}
+
+.tdl-root input:disabled,
+.tdl-root select:disabled,
+.tdl-root textarea:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.tdl-root select {
+  appearance: none;
+  padding-right: 26px;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 15px) 14px, calc(100% - 10px) 14px;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+.tdl-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--tdl-text-soft);
+  cursor: pointer;
+  user-select: none;
+}
+
+.tdl-check input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--tdl-accent-strong);
+  cursor: pointer;
+}
+
+.tdl-check:hover {
+  color: var(--tdl-text);
+}
+
+.tdl-role {
+  display: grid;
+  grid-template-columns: 68px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.tdl-role__slot {
+  font-family: var(--tdl-mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--tdl-text-soft);
+}
+
+.tdl-role__slot[data-connected="true"] {
+  color: var(--tdl-accent-strong);
+}
+
+/* -- buttons -------------------------------------------------------------- */
+
+.tdl-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--tdl-text);
+  white-space: nowrap;
+  background: var(--tdl-field);
+  border: 1px solid var(--tdl-border);
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background-color 130ms linear, border-color 130ms linear, color 130ms linear;
+}
+
+.tdl-btn:hover {
+  background: color-mix(in oklab, var(--tdl-text) 9%, var(--tdl-field));
+  border-color: color-mix(in oklab, var(--tdl-border) 55%, var(--tdl-text) 45%);
+}
+
+.tdl-btn:active {
+  background: color-mix(in oklab, var(--tdl-text) 14%, var(--tdl-field));
+}
+
+.tdl-btn:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
+.tdl-btn:focus-visible,
+.tdl-iconbtn:focus-visible,
+.tdl-item:focus-visible,
+.tdl-seg__btn:focus-visible {
+  outline: 2px solid var(--tdl-accent-strong);
+  outline-offset: 1px;
+}
+
+.tdl-btn--block {
+  width: 100%;
+}
+
+.tdl-btn--primary {
+  color: var(--tdl-surface);
+  background: var(--tdl-accent-strong);
+  border-color: transparent;
+}
+.tdl-btn--primary:hover {
+  background: color-mix(in oklab, var(--tdl-accent-strong) 86%, var(--tdl-text) 14%);
+  border-color: transparent;
+}
+.tdl-btn--primary:disabled {
+  color: var(--tdl-surface);
+  background: var(--tdl-accent-strong);
+}
+
+.tdl-btn--ghost {
+  background: transparent;
+  border-color: transparent;
+}
+.tdl-btn--ghost:hover {
+  background: color-mix(in oklab, var(--tdl-text) 8%, transparent);
+  border-color: transparent;
+}
+
+.tdl-btn--danger {
+  color: var(--tdl-danger);
+}
+.tdl-btn--danger:hover {
+  color: var(--tdl-danger);
+  background: var(--tdl-danger-soft);
+  border-color: color-mix(in oklab, var(--tdl-danger) 38%, var(--tdl-surface));
+}
+
+.tdl-iconbtn {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  color: var(--tdl-text-soft);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background-color 130ms linear, color 130ms linear;
+}
+.tdl-iconbtn:hover {
+  color: var(--tdl-text);
+  background: color-mix(in oklab, var(--tdl-text) 9%, transparent);
+}
+.tdl-iconbtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.tdl-spin {
+  animation: tdl-spin 900ms linear infinite;
+}
+@keyframes tdl-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tdl-spin {
+    animation-duration: 2.4s;
+  }
+}
+
+/* -- preview + provider cards -------------------------------------------- */
+
+.tdl-preview {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tdl-preview__wiring {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.tdl-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  font-family: var(--tdl-mono);
+  font-size: 11px;
+  color: var(--tdl-text-faint);
+  background: var(--tdl-well);
+  border: 1px solid var(--tdl-border-soft);
+  border-radius: 999px;
+}
+
+.tdl-chip[data-on="true"] {
+  color: var(--tdl-accent-strong);
+  background: var(--tdl-accent-soft);
+  border-color: var(--tdl-accent-line);
+}
+
+.tdl-chip__dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.tdl-transcript {
+  max-height: 280px;
+  margin: 0;
+  overflow: auto;
+  padding: 12px 13px;
+  font-family: var(--tdl-mono);
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--tdl-text-soft);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--tdl-well);
+  border: 1px solid var(--tdl-border-soft);
+  border-radius: 8px;
+}
+
+.tdl-transcript b {
+  font-weight: 600;
+  color: var(--tdl-accent-strong);
+}
+
+.tdl-card {
+  padding: 15px 16px 16px;
+  background: var(--tdl-well);
+  border: 1px solid var(--tdl-border-soft);
+  border-radius: 10px;
+}
+
+.tdl-card + .tdl-card {
+  margin-top: 14px;
+}
+
+.tdl-card__head {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.tdl-card__title {
+  margin: 0 0 2px;
+  font-size: 13.5px;
+  font-weight: 650;
+  color: var(--tdl-text);
+}
+
+.tdl-card__summary {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--tdl-text-faint);
+}
+
+.tdl-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.tdl-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  color: var(--tdl-text-faint);
+  background: color-mix(in oklab, var(--tdl-text) 8%, transparent);
+  border-radius: 999px;
+}
+
+.tdl-badge[data-on="true"] {
+  color: var(--tdl-ok);
+  background: color-mix(in oklab, var(--tdl-ok) 14%, transparent);
+}
+
+.tdl-pathrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  font-family: var(--tdl-mono);
+  font-size: 11.5px;
+  color: var(--tdl-text-soft);
+  background: var(--tdl-well);
+  border: 1px solid var(--tdl-border-soft);
+  border-radius: 7px;
+}
+
+.tdl-pathrow span {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tdl-pathrow + .tdl-pathrow {
+  margin-top: 6px;
+}
+
+.tdl-pathrow em {
+  flex: 0 0 auto;
+  font-style: normal;
+  color: var(--tdl-text-faint);
+}
+
+/* -- empty state ---------------------------------------------------------- */
+
+.tdl-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 100%;
+  min-height: 260px;
+  padding: 32px 24px;
+  text-align: center;
+}
+
+.tdl-empty svg {
+  color: var(--tdl-text-faint);
+}
+
+.tdl-empty h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.tdl-empty p {
+  max-width: 46ch;
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--tdl-text-faint);
+}
+
+.tdl-empty__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+/* -- footer --------------------------------------------------------------- */
+
+.tdl-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  min-height: 58px;
+  padding: 10px 14px;
+  background: var(--tdl-raised);
+  border-top: 1px solid var(--tdl-border-soft);
+}
+
+.tdl-foot__note {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--tdl-text-faint);
+}
+
+.tdl-foot__note[data-kind="error"] {
+  color: var(--tdl-danger);
+}
+.tdl-foot__note[data-kind="warn"] {
+  color: var(--tdl-warn);
+}
+.tdl-foot__note[data-kind="ok"] {
+  color: var(--tdl-ok);
+}
+
+.tdl-foot__note code {
+  font-family: var(--tdl-mono);
+  font-size: 11px;
+  color: var(--tdl-text-soft);
+}
+
+.tdl-foot__actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  row-gap: 6px;
+}
+
+.tdl-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 12px;
+  font-size: 12px;
+  color: var(--tdl-warn);
+  background: color-mix(in oklab, var(--tdl-warn) 12%, var(--tdl-surface));
+  border: 1px solid color-mix(in oklab, var(--tdl-warn) 34%, var(--tdl-surface));
+  border-radius: 8px;
+}
+
+/* -- narrow windows ------------------------------------------------------- */
+
+@media (max-width: 880px) {
+  .tdl-overlay {
+    padding: 12px;
+  }
+  .tdl-panel {
+    width: 100%;
+    height: 100%;
+  }
+  .tdl-body {
+    flex-direction: column;
+  }
+  .tdl-list {
+    width: 100%;
+    max-height: 34%;
+    border-right: 0;
+    border-bottom: 1px solid var(--tdl-border-soft);
+  }
+  .tdl-grid--2,
+  .tdl-grid--3 {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .tdl-head__path {
+    display: none;
+  }
+}

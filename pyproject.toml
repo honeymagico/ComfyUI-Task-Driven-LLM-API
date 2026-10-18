@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ComfyUI-Task-Driven-LLM-API"
+version = "0.1.0"
+description = "ComfyUI node that runs a stored prompt-library TASK against an LLM API (Ollama / OpenAI-compatible), with zero to many IMAGE inputs."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+keywords = ["comfyui", "custom-nodes", "llm", "ollama", "vlm", "prompt-library"]
+classifiers = [
+    "Development Status :: 3 - Beta",
+    "Environment :: Plugins",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Graphics",
+]
+dependencies = ["requests>=2.28"]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+
+[project.urls]
+Repository = "https://github.com/honeymagico/ComfyUI-Task-Driven-LLM-API"
+
+# ComfyUI loads this folder directly as a custom node package (its
+# top-level ``__init__.py`` exposes NODE_CLASS_MAPPINGS).  The folder name
+# contains dashes, which is fine for ComfyUI's path-based loader but is
+# not a legal setuptools package name, so no package mapping is declared
+# here -- only registry metadata.
+[tool.comfy]
+PublisherId = "honey"
+DisplayName = "Task-Driven LLM API（提示詞任務 · LLM API）"
+Icon = ""
+includes = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
